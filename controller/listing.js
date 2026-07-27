@@ -113,72 +113,93 @@ module.exports.renderEditForm= async(req,res)=>{
     res.render("listings/edit.ejs",{listing, originalImageUrl});
 }
 
-module.exports.updateListing = async (req, res) => {
+module.exports.updateListing = async (req, res, next) => {
     if (!req.body.listing) {
         throw new ExpressError(400, "Send valid data for updating");
     }
 
-    let { id } = req.params;
+    const { id } = req.params;
 
-   
-    const query = `${req.body.listing.location}, ${req.body.listing.country}`;
+    // Get existing listing
+    const oldListing = await Listing.findById(id);
 
-    const response = await axios.get(
-        "https://nominatim.openstreetmap.org/search",
-        {
-            params: {
-                q: query,
-                format: "json",
-                limit: 1
-            },
-            headers: {
-                "User-Agent": "Wanderlust-App"
+    if (!oldListing) {
+        req.flash("error", "Listing not found");
+        return res.redirect("/listings");
+    }
+
+    // Check if location or country changed
+    const locationChanged =
+        oldListing.location !== req.body.listing.location ||
+        oldListing.country !== req.body.listing.country;
+
+    if (locationChanged) {
+        const query = `${req.body.listing.location}, ${req.body.listing.country}`;
+
+        try {
+            const response = await axios.get(
+                "https://nominatim.openstreetmap.org/search",
+                {
+                    params: {
+                        q: query,
+                        format: "json",
+                        limit: 1,
+                    },
+                    headers: {
+                        "User-Agent": "Wanderlust-App",
+                    },
+                }
+            );
+
+            const result = response.data[0];
+
+            if (!result) {
+                req.flash(
+                    "error",
+                    "Location not found. Please enter a valid location."
+                );
+                return res.redirect(`/listings/${id}/edit`);
             }
+
+            req.body.listing.geometry = {
+                type: "Point",
+                coordinates: [
+                    Number(result.lon),
+                    Number(result.lat),
+                ],
+            };
+
+        } catch (err) {
+            if (err.response?.status === 429) {
+                req.flash(
+                    "error",
+                    "Location service is temporarily busy. Please try again after a minute."
+                );
+                return res.redirect(`/listings/${id}/edit`);
+            }
+
+            return next(err);
         }
-    );
-    const result = response.data[0];
-    
+    }
 
-if (!result) {
-    req.flash("error", "Location not found. Please enter a valid location.");
-    return res.redirect(`/listings/${id}/edit`);
-}
-
-// if (
-//     !result.display_name
-//         .toLowerCase()
-//         .includes(req.body.listing.location.toLowerCase())
-// ) {
-//     req.flash("error", "Please enter a valid location.");
-//     return res.redirect(`/listings/${id}/edit`);
-// }
-
-   if (response.data.length > 0) {
-    req.body.listing.geometry = {
-        type: "Point",
-        coordinates: [
-            Number(response.data[0].lon),
-            Number(response.data[0].lat)
-        ]
-    };
-}
-
-    
+    // Update listing
     let listing = await Listing.findByIdAndUpdate(
         id,
-        { ...req.body.listing },
-        { new: true }
+        req.body.listing,
+        { new: true, runValidators: true }
     );
 
+    // Update image if a new image is uploaded
     if (req.file) {
         listing.image = {
             url: req.file.path,
-            filename: req.file.filename
+            filename: req.file.filename,
         };
+
         await listing.save();
     }
 
-    req.flash("success", "Successfully updated a listing");
+    req.flash("success", "Successfully updated the listing");
     res.redirect(`/listings/${id}`);
 };
 module.exports.deleteListing= async(req,res)=>{
