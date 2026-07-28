@@ -45,61 +45,75 @@ module.exports.showListing= async(req,res)=>{
   res.render("listings/show.ejs",{listing})
 }
 
-module.exports.createListing=async(req,res,next)=>{
-const query = `${req.body.listing.location}, ${req.body.listing.country}`;
+module.exports.createListing = async (req, res, next) => {
+    const query = `${req.body.listing.location}, ${req.body.listing.country}`;
 
-const response = await axios.get(
-    "https://nominatim.openstreetmap.org/search",
-    {
-        params: {
-            q: query,
-            format: "json",
-            limit: 1
-        },
-        headers: {
-            "User-Agent": "Wanderlust-App"
+    let result;
+
+    try {
+        const response = await axios.get(
+            "https://nominatim.openstreetmap.org/search",
+            {
+                params: {
+                    q: query,
+                    format: "json",
+                    limit: 1,
+                },
+                headers: {
+                    "User-Agent": "Wanderlust-App",
+                },
+            }
+        );
+
+        result = response.data[0];
+
+        if (!result) {
+            req.flash(
+                "error",
+                "Location not found. Please enter a valid location."
+            );
+            return res.redirect("/listings/new");
         }
+
+        
+
+    } catch (err) {
+
+        if (err.response?.status === 429) {
+            req.flash(
+                "error",
+                "Location service is temporarily busy. Please try again after a minute."
+            );
+            return res.redirect("/listings/new");
+        }
+
+        return next(err);
     }
-);
 
-    let url=req.file.path;
-    let filename=req.file.filename;
-    const listing=new Listing(req.body.listing);
-    listing.owner=req.user._id;
-    listing.image = { url, filename };
-   
-const result = response.data[0];
+    const url = req.file.path;
+    const filename = req.file.filename;
 
-if (!result) {
-    req.flash("error", "Location not found. Please enter a valid location.");
-    return res.redirect("/listings/new");
-}
+    const listing = new Listing(req.body.listing);
 
-if (
-    !result.display_name
-        .toLowerCase()
-        .includes(req.body.listing.location.toLowerCase())
-) {
-    req.flash("error", "Please enter a valid location.");
-    return res.redirect("/listings/new");
-}
-    if (response.data.length > 0) {
+    listing.owner = req.user._id;
+    listing.image = {
+        url,
+        filename,
+    };
+
     listing.geometry = {
         type: "Point",
         coordinates: [
-            Number(response.data[0].lon),
-            Number(response.data[0].lat)
-        ]
+            Number(result.lon),
+            Number(result.lat),
+        ],
     };
-}
-   
-    let savedListing = await listing.save();
-    req.flash("success","Successfully made a new listing");
-    
-   
-   
+
+    await listing.save();
+
+    req.flash("success", "Successfully made a new listing");
     res.redirect("/listings");
-}
+};
 
 module.exports.renderEditForm= async(req,res)=>{
     let {id}=req.params;
